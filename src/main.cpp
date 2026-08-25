@@ -8,6 +8,8 @@
 #include <QGuiApplication>
 #include <QDir>
 #include <QTimer>
+#include <QThread>
+#include <QClipboard>
 #include "GlobalHotkey.h"
 #include "SelectionOverlay.h"
 #include "ResultOverlay.h"
@@ -16,6 +18,7 @@
 #include "ConfigManager.h"
 #include "PaddleOcrEngine.h"
 #include "SettingsDialog.h"
+#include "HistoryWindow.h"
 
 class MainApp : public QObject {
     Q_OBJECT
@@ -47,6 +50,26 @@ public:
     }
 
 private slots:
+    // void showManualHistory() {
+    //     if (!m_manualHistoryWindow) {
+    //         m_manualHistoryWindow = new HistoryWindow("手动翻译记录", nullptr);
+    //         m_manualHistoryWindow->setHistory(m_manualHistoryList);
+    //     }
+    //     m_manualHistoryWindow->show();
+    //     m_manualHistoryWindow->raise();
+    //     m_manualHistoryWindow->activateWindow();
+    // }
+
+    void showAutoHistory() {
+        if (!m_autoHistoryWindow) {
+            m_autoHistoryWindow = new HistoryWindow("自动监听记录", nullptr);
+        }
+        m_autoHistoryWindow->setHistory(m_autoHistoryList);
+        m_autoHistoryWindow->show();
+        m_autoHistoryWindow->raise();
+        m_autoHistoryWindow->activateWindow();
+    }
+
     void showSettingsDialog() {
         setScreenshotEnabled(false);
 
@@ -76,6 +99,7 @@ private slots:
     void startAutoMonitor() {
         if (m_autoMonitorActive) {
             qDebug() << "Auto monitor already active";
+            m_lastOcrResult.clear();
             syncMenuState();
             return;
         }
@@ -110,6 +134,7 @@ private slots:
     void stopAutoMonitor() {
         if (!m_autoMonitorActive) {
             qDebug() << "Auto monitor already inactive";
+            m_lastOcrResult.clear();
             syncMenuState();
             return;
         }
@@ -210,6 +235,7 @@ private slots:
                                           if (!m_autoMonitorActive) return;
                                           if (text.isEmpty()) return;
                                           qDebug() << "Auto monitor: OCR result:" << text;
+
                                           if (m_lastOcrResult.isEmpty()) {
                                               m_lastOcrResult = text;
                                               m_resultOverlay->showResultAt("正在翻译...", m_lockedRegion);
@@ -249,6 +275,11 @@ private:
     QString m_lastOcrResult;
     QAction* m_autoMonitorAction = nullptr;
     QMetaObject::Connection m_autoOcrConnection;
+    HistoryWindow* m_historyWindow = nullptr;
+    //HistoryWindow* m_manualHistoryWindow = nullptr;   // 手动截图历史
+    HistoryWindow* m_autoHistoryWindow = nullptr;     // 自动监听历史
+    //QStringList m_manualHistoryList;
+    QStringList m_autoHistoryList;
 
     void setupTray() {
         m_tray = new QSystemTrayIcon(this);
@@ -263,6 +294,18 @@ private:
         connect(autoMonitorAction, &QAction::triggered, this, &MainApp::toggleAutoMonitor);
         menu->addAction(autoMonitorAction);
         m_autoMonitorAction = autoMonitorAction;
+
+        menu->addSeparator();
+
+        // QAction* manualHistoryAction = new QAction("手动翻译记录", this);
+        // connect(manualHistoryAction, &QAction::triggered, this, &MainApp::showManualHistory);
+        // menu->addAction(manualHistoryAction);
+
+        // menu->addSeparator();
+
+        QAction* autoHistoryAction = new QAction("自动监听记录", this);
+        connect(autoHistoryAction, &QAction::triggered, this, &MainApp::showAutoHistory);
+        menu->addAction(autoHistoryAction);
 
         menu->addSeparator();
 
@@ -319,6 +362,9 @@ private:
             delete m_ocrEngine;
             m_ocrEngine = nullptr;
         }
+
+        // ★ 等待进程完全释放
+        QThread::msleep(200);
 
         setupOcr();
     }
@@ -389,6 +435,10 @@ private:
 
     void onRegionSelected(const QRect& rect) {
         qDebug() << "Region selected:" << rect;
+
+        // ★ 手动截图时重置自动监听的文字缓存，避免干扰
+        m_lastOcrResult.clear();
+
         m_currentRect = rect;
 
         QScreen* screen = QGuiApplication::primaryScreen();
@@ -433,9 +483,17 @@ private:
 
     void onTranslationDone(const QString& result) {
         if (m_autoMonitorActive) {
+            // 自动模式：显示在锁定区域，永久显示，记录到自动历史
+            m_autoHistoryList.append(result);
+            if (m_autoHistoryWindow && m_autoHistoryWindow->isVisible()) {
+                m_autoHistoryWindow->addEntry(result);
+            }
             m_resultOverlay->showResultAt(result, m_lockedRegion, 0);
         } else {
-            m_resultOverlay->showResultAt(result, m_currentRect, 5000);
+            // ★ 手动模式：自动复制到剪贴板
+            QClipboard* clipboard = QGuiApplication::clipboard();
+            clipboard->setText(result);
+            m_resultOverlay->showResultAt(result + "\n\n(已复制到剪贴板)", m_currentRect, 3000);
         }
     }
 
@@ -463,6 +521,16 @@ private:
             m_ocrEngine->shutdown();
         }
 
+        // if (m_manualHistoryWindow) {
+        //     m_manualHistoryWindow->close();
+        //     delete m_manualHistoryWindow;
+        //     m_manualHistoryWindow = nullptr;
+        // }
+        if (m_autoHistoryWindow) {
+            m_autoHistoryWindow->close();
+            delete m_autoHistoryWindow;
+            m_autoHistoryWindow = nullptr;
+        }
         qApp->quit();
     }
 };

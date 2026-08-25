@@ -18,6 +18,7 @@ set(SOURCES
     src/ConfigManager.cpp
     src/PaddleOcrEngine.cpp
     src/SettingsDialog.cpp
+    src/HistoryWindow.cpp
 )
 
 set(HEADERS
@@ -29,6 +30,7 @@ set(HEADERS
     src/ConfigManager.h
     src/PaddleOcrEngine.h
     src/SettingsDialog.h
+    src/HistoryWindow.h
 )
 
 add_executable(${PROJECT_NAME} WIN32 ${SOURCES} ${HEADERS})
