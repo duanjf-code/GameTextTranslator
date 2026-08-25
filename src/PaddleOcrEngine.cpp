@@ -36,6 +36,9 @@ bool PaddleOcrEngine::initialize(const QString& exePath, const QString& modelCon
 
     QStringList args;
     args << "--config_path=" + configPath;
+    args << "--enable_mkldnn=false";   // 关闭 MKLDNN 加速，降低内存
+    args << "--cpu_threads=2";         // 限制线程数
+    args << "--rec_batch_num=2";       // 降低批量大小
 
     qDebug() << "Starting PaddleOCR-json with working dir:" << dir.absolutePath();
     qDebug() << "Command:" << exePath << args.join(" ");
@@ -68,7 +71,6 @@ void PaddleOcrEngine::onReadyRead() {
     QString output = m_process->readAllStandardOutput();
     qDebug() << "OCR stdout:" << output;
 
-    // 检查是否初始化完成
     if (!m_initialized && output.contains("OCR init completed.")) {
         m_initialized = true;
         emit initialized(true, "");
@@ -76,29 +78,31 @@ void PaddleOcrEngine::onReadyRead() {
         return;
     }
 
-    // 检查是否初始化失败
     if (!m_initialized && output.contains("OCR init failed")) {
         emit initialized(false, "OCR 引擎初始化失败");
         return;
     }
 
-    // 如果是识别结果（JSON 格式），解析并发送
     if (m_initialized) {
-        // 尝试解析 JSON
         QJsonParseError error;
         QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
         if (error.error == QJsonParseError::NoError) {
             QJsonObject obj = doc.object();
             int code = obj["code"].toInt();
             if (code == 100) {
-                // 识别成功，提取文本
                 QJsonArray data = obj["data"].toArray();
                 QStringList texts;
                 for (const auto& item : data) {
                     QJsonObject block = item.toObject();
-                    texts << block["text"].toString();
+                    QString text = block["text"].toString();
+                    // ★ 关键日志：打印原始识别文本
+                    qDebug() << "OCR raw text:" << text;
+                    qDebug() << "OCR raw text (hex):" << text.toUtf8().toHex();
+                    texts << text;
                 }
-                emit recognitionDone(texts.join(" "));
+                QString result = texts.join(" ");
+                qDebug() << "OCR result:" << result;
+                emit recognitionDone(result);
             } else if (code == 101) {
                 emit recognitionError("未识别到文字");
             } else {

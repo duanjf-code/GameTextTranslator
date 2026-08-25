@@ -6,13 +6,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QHBoxLayout>
-#include <QCoreApplication>
 #include <QSettings>
+#include <QCoreApplication>
+#include <QDebug>
 
 SettingsDialog::SettingsDialog(QWidget* parent)
     : QDialog(parent), m_currentConfigPath("") {
     setWindowTitle("配置");
-    setFixedSize(500, 400);
+    setFixedSize(500, 480);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
@@ -62,6 +63,13 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     m_targetLangCombo->addItem("ja", "日文");
     m_targetLangCombo->addItem("ko", "韩文");
     formLayout->addRow("翻译目标语言:", m_targetLangCombo);
+
+    // ===== 监听间隔 =====
+    m_intervalSpinBox = new QSpinBox(this);
+    m_intervalSpinBox->setRange(1, 10);
+    m_intervalSpinBox->setSuffix(" 秒");
+    m_intervalSpinBox->setToolTip("自动监听模式下，每隔几秒截图识别一次");
+    formLayout->addRow("监听间隔:", m_intervalSpinBox);
 
     // ===== 开机自启 =====
     m_autoStartCheck = new QCheckBox("开机自动启动", this);
@@ -140,11 +148,14 @@ void SettingsDialog::loadFromFile(const QString& path) {
     int targetIndex = m_targetLangCombo->findData(targetLang);
     if (targetIndex >= 0) m_targetLangCombo->setCurrentIndex(targetIndex);
 
+    int interval = obj["monitor_interval"].toInt(3000);
+    m_intervalSpinBox->setValue(interval / 1000);
+
     m_currentConfigPath = path;
     m_configPathLabel->setText(path);
     m_configPathLabel->setStyleSheet("color: black; font-size: 9pt;");
 
-    // ★ 加载后立即应用到程序
+    // 加载后立即应用到程序
     applySettings();
 
     QMessageBox::information(this, "成功", "配置已加载并应用");
@@ -158,6 +169,7 @@ void SettingsDialog::saveToFile(const QString& path) {
     obj["auto_start"] = m_autoStartCheck->isChecked();
     obj["ocr_language"] = m_ocrLangCombo->currentText();
     obj["target_language"] = m_targetLangCombo->currentData().toString();
+    obj["monitor_interval"] = m_intervalSpinBox->value() * 1000;
 
     QJsonDocument doc(obj);
 
@@ -175,6 +187,43 @@ void SettingsDialog::saveToFile(const QString& path) {
     m_configPathLabel->setStyleSheet("color: black; font-size: 9pt;");
 
     QMessageBox::information(this, "成功", "配置已保存到:\n" + path);
+}
+
+void SettingsDialog::applySettings() {
+    auto& config = ConfigManager::instance();
+
+    config.setBaiduAppId(m_appIdEdit->text().trimmed());
+    config.setBaiduSecretKey(m_secretKeyEdit->text().trimmed());
+
+    QKeySequence hotkey = m_hotkeyEdit->keySequence();
+    if (!hotkey.isEmpty()) {
+        config.setScreenshotHotkey(hotkey);
+    }
+
+    config.setAutoStart(m_autoStartCheck->isChecked());
+    config.setOcrLanguage(m_ocrLangCombo->currentText());
+    config.setTargetLanguage(m_targetLangCombo->currentData().toString());
+    config.setMonitorInterval(m_intervalSpinBox->value() * 1000);
+
+    // 应用开机自启（注册表）
+    if (m_autoStartCheck->isChecked()) {
+        QSettings settings(
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            QSettings::NativeFormat);
+        QString appPath = QCoreApplication::applicationFilePath();
+        appPath.replace("/", "\\");
+        settings.setValue("GameTextTranslator", appPath);
+    } else {
+        QSettings settings(
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            QSettings::NativeFormat);
+        settings.remove("GameTextTranslator");
+    }
+
+    emit config.configChanged();
+
+    qDebug() << "配置已应用到程序";
+    qDebug() << "  monitor_interval:" << config.getMonitorInterval();
 }
 
 void SettingsDialog::showEvent(QShowEvent* event) {
@@ -196,6 +245,10 @@ void SettingsDialog::loadSettings() {
     QString targetLang = config.getTargetLanguage();
     int targetIndex = m_targetLangCombo->findData(targetLang);
     if (targetIndex >= 0) m_targetLangCombo->setCurrentIndex(targetIndex);
+
+    int interval = config.getMonitorInterval();
+    if (interval <= 0) interval = 3000;
+    m_intervalSpinBox->setValue(interval / 1000);
 
     // 显示当前配置路径
     QString defaultPath = getDefaultConfigPath();
@@ -219,6 +272,7 @@ void SettingsDialog::saveSettings() {
     config.setAutoStart(m_autoStartCheck->isChecked());
     config.setOcrLanguage(m_ocrLangCombo->currentText());
     config.setTargetLanguage(m_targetLangCombo->currentData().toString());
+    config.setMonitorInterval(m_intervalSpinBox->value() * 1000);
 
     // 应用开机自启
     if (m_autoStartCheck->isChecked()) {
@@ -239,11 +293,8 @@ void SettingsDialog::saveSettings() {
 }
 
 void SettingsDialog::onSave() {
-    // 如果已有路径，直接保存；否则另存为
-    if (!m_currentConfigPath.isEmpty()) {
+    if (!m_currentConfigPath.isEmpty() && QFile::exists(m_currentConfigPath)) {
         saveToFile(m_currentConfigPath);
-        // ★ 保存后立即应用到程序
-        applySettings();
     } else {
         onSaveAs();
     }
@@ -255,46 +306,7 @@ void SettingsDialog::onSaveAs() {
                                                 "JSON Files (*.json)");
     if (!path.isEmpty()) {
         saveToFile(path);
-        // ★ 保存后立即应用到程序
-        applySettings();
     }
-}
-
-void SettingsDialog::applySettings() {
-    auto& config = ConfigManager::instance();
-
-    // 更新所有配置
-    config.setBaiduAppId(m_appIdEdit->text().trimmed());
-    config.setBaiduSecretKey(m_secretKeyEdit->text().trimmed());
-
-    QKeySequence hotkey = m_hotkeyEdit->keySequence();
-    if (!hotkey.isEmpty()) {
-        config.setScreenshotHotkey(hotkey);
-    }
-
-    config.setAutoStart(m_autoStartCheck->isChecked());
-    config.setOcrLanguage(m_ocrLangCombo->currentText());
-    config.setTargetLanguage(m_targetLangCombo->currentData().toString());
-
-    // 应用开机自启（注册表）
-    if (m_autoStartCheck->isChecked()) {
-        QSettings settings(
-            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-            QSettings::NativeFormat);
-        QString appPath = QCoreApplication::applicationFilePath();
-        appPath.replace("/", "\\");
-        settings.setValue("GameTextTranslator", appPath);
-    } else {
-        QSettings settings(
-            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-            QSettings::NativeFormat);
-        settings.remove("GameTextTranslator");
-    }
-
-    // 发送配置变更信号，让程序重新加载热键等
-    emit config.configChanged();
-
-    qDebug() << "配置已应用到程序";
 }
 
 void SettingsDialog::onLoad() {
@@ -303,17 +315,6 @@ void SettingsDialog::onLoad() {
                                                 "JSON Files (*.json)");
     if (!path.isEmpty()) {
         loadFromFile(path);
-        // 加载后应用到全局配置
-        auto& config = ConfigManager::instance();
-        config.setBaiduAppId(m_appIdEdit->text().trimmed());
-        config.setBaiduSecretKey(m_secretKeyEdit->text().trimmed());
-        QKeySequence hotkey = m_hotkeyEdit->keySequence();
-        if (!hotkey.isEmpty()) {
-            config.setScreenshotHotkey(hotkey);
-        }
-        config.setAutoStart(m_autoStartCheck->isChecked());
-        config.setOcrLanguage(m_ocrLangCombo->currentText());
-        config.setTargetLanguage(m_targetLangCombo->currentData().toString());
     }
 }
 

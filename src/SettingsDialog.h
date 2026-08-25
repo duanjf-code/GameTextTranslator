@@ -12,6 +12,7 @@
 #include <QFormLayout>
 #include <QComboBox>
 #include <QPushButton>
+#include <QSpinBox>
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
@@ -47,6 +48,7 @@ private:
     QPushButton* m_loadBtn;
     QPushButton* m_cancelBtn;
     QLabel* m_configPathLabel;
+    QSpinBox* m_intervalSpinBox;
 
     QString m_currentConfigPath;
 };

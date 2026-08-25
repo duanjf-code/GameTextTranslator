@@ -57,6 +57,7 @@ private slots:
         connect(&dialog, &QDialog::finished, this, [this](int) {
             ConfigManager::instance().load();
             setupHotkeys();
+            reinitOcr();
             setScreenshotEnabled(true);
             qDebug() << "Settings dialog closed, screenshot re-enabled";
         });
@@ -64,7 +65,21 @@ private slots:
         dialog.exec();
     }
 
+    void toggleAutoMonitor(bool checked) {
+        if (checked) {
+            startAutoMonitor();
+        } else {
+            stopAutoMonitor();
+        }
+    }
+
     void startAutoMonitor() {
+        if (m_autoMonitorActive) {
+            qDebug() << "Auto monitor already active";
+            syncMenuState();
+            return;
+        }
+
         qDebug() << "Starting auto monitor mode...";
 
         if (m_selectionOverlay) {
@@ -74,26 +89,62 @@ private slots:
 
         m_selectionOverlay = new SelectionOverlay();
         m_selectionOverlay->setMode(SelectionOverlay::Mode::LockRegion);
+
+        // ★ 连接取消信号
+        connect(m_selectionOverlay, &SelectionOverlay::cancelled, this, [this]() {
+            qDebug() << "Auto monitor cancelled by user (ESC/right click)";
+            m_autoMonitorActive = false;
+            if (m_selectionOverlay) {
+                m_selectionOverlay->deleteLater();
+                m_selectionOverlay = nullptr;
+            }
+            syncMenuState();
+            m_resultOverlay->showResult("已取消自动监听");
+        });
+
         connect(m_selectionOverlay, &SelectionOverlay::regionSelected,
                 this, &MainApp::onLockRegionSelected);
         m_selectionOverlay->startSelection();
     }
 
     void stopAutoMonitor() {
+        if (!m_autoMonitorActive) {
+            qDebug() << "Auto monitor already inactive";
+            syncMenuState();
+            return;
+        }
+
         qDebug() << "Stopping auto monitor mode...";
+
         m_autoMonitorActive = false;
 
         if (m_monitorTimer) {
             m_monitorTimer->stop();
         }
 
-        m_lockedRegion = QRect();
-        m_lastOcrResult.clear();
-
-        if (m_autoMonitorAction) {
-            m_autoMonitorAction->setChecked(false);
+        if (m_autoOcrConnection) {
+            disconnect(m_autoOcrConnection);
+            m_autoOcrConnection = QMetaObject::Connection();
         }
 
+        if (m_selectionOverlay) {
+            m_selectionOverlay->deleteLater();
+            m_selectionOverlay = nullptr;
+        }
+
+        m_lockedRegion = QRect();
+        m_lastOcrResult.clear();
+        m_resultOverlay->hideResult();
+
+        // 重新初始化 OCR（同步，确保后续可用）
+        if (m_ocrEngine) {
+            m_ocrEngine->shutdown();
+            delete m_ocrEngine;
+            m_ocrEngine = nullptr;
+        }
+        setupOcr();
+
+        syncMenuState();
         m_resultOverlay->showResult("已停止自动监听");
     }
 
@@ -110,7 +161,7 @@ private slots:
         }
 
         int interval = ConfigManager::instance().getMonitorInterval();
-        if (interval <= 0) interval = 1000;
+        if (interval <= 0) interval = 3000;
         m_monitorTimer->start(interval);
 
         m_resultOverlay->showResultAt(QString("已锁定区域，开始自动监听\n%1×%2\n间隔 %3ms")
@@ -120,6 +171,8 @@ private slots:
             m_selectionOverlay->deleteLater();
             m_selectionOverlay = nullptr;
         }
+
+        syncMenuState();
     }
 
     void onMonitorTick() {
@@ -147,32 +200,37 @@ private slots:
         QString tempPath = QDir::temp().absoluteFilePath("auto_ocr_temp.png");
         if (!currentFrame.save(tempPath, "PNG")) return;
 
-        connect(m_ocrEngine, &PaddleOcrEngine::recognitionDone, this, [this](const QString& text) {
-            if (text.isEmpty()) {
-                qDebug() << "Auto monitor: OCR returned empty";
-                return;
-            }
+        if (m_autoOcrConnection) {
+            disconnect(m_autoOcrConnection);
+            m_autoOcrConnection = QMetaObject::Connection();
+        }
 
-            qDebug() << "Auto monitor: OCR result:" << text;
-
-            if (m_lastOcrResult.isEmpty()) {
-                m_lastOcrResult = text;
-                m_resultOverlay->showResultAt("正在翻译...", m_lockedRegion);
-                m_translator->translate(text);
-                return;
-            }
-
-            if (text != m_lastOcrResult) {
-                m_lastOcrResult = text;
-                m_resultOverlay->showResultAt("正在翻译...", m_lockedRegion);
-                m_translator->translate(text);
-                qDebug() << "Auto monitor: text changed, translating";
-            } else {
-                qDebug() << "Auto monitor: text unchanged, skipping";
-            }
-        }, Qt::SingleShotConnection);
+        m_autoOcrConnection = connect(m_ocrEngine, &PaddleOcrEngine::recognitionDone,
+                                      this, [this](const QString& text) {
+                                          if (!m_autoMonitorActive) return;
+                                          if (text.isEmpty()) return;
+                                          qDebug() << "Auto monitor: OCR result:" << text;
+                                          if (m_lastOcrResult.isEmpty()) {
+                                              m_lastOcrResult = text;
+                                              m_resultOverlay->showResultAt("正在翻译...", m_lockedRegion);
+                                              m_translator->translate(text);
+                                              return;
+                                          }
+                                          if (text != m_lastOcrResult) {
+                                              m_lastOcrResult = text;
+                                              m_resultOverlay->showResultAt("正在翻译...", m_lockedRegion);
+                                              m_translator->translate(text);
+                                              qDebug() << "Auto monitor: text changed, translating";
+                                          }
+                                      });
 
         m_ocrEngine->recognize(tempPath);
+    }
+
+    void syncMenuState() {
+        if (m_autoMonitorAction) {
+            m_autoMonitorAction->setChecked(m_autoMonitorActive);
+        }
     }
 
 private:
@@ -186,10 +244,11 @@ private:
     bool m_screenshotEnabled;
     bool m_autoMonitorActive;
     QRect m_lockedRegion;
-    QRect m_currentRect;  // 保存当前截图区域
+    QRect m_currentRect;
     QTimer* m_monitorTimer = nullptr;
     QString m_lastOcrResult;
     QAction* m_autoMonitorAction = nullptr;
+    QMetaObject::Connection m_autoOcrConnection;
 
     void setupTray() {
         m_tray = new QSystemTrayIcon(this);
@@ -201,14 +260,7 @@ private:
         QAction* autoMonitorAction = new QAction("自动监听模式", this);
         autoMonitorAction->setCheckable(true);
         autoMonitorAction->setChecked(false);
-        connect(autoMonitorAction, &QAction::triggered, this, [this, autoMonitorAction](bool checked) {
-            if (checked) {
-                startAutoMonitor();
-            } else {
-                stopAutoMonitor();
-            }
-            autoMonitorAction->setChecked(checked);
-        });
+        connect(autoMonitorAction, &QAction::triggered, this, &MainApp::toggleAutoMonitor);
         menu->addAction(autoMonitorAction);
         m_autoMonitorAction = autoMonitorAction;
 
@@ -259,9 +311,20 @@ private:
         qDebug() << "Hotkey registered:" << hotkey.toString();
     }
 
+    void reinitOcr() {
+        qDebug() << "Reinitializing OCR...";
+
+        if (m_ocrEngine) {
+            m_ocrEngine->shutdown();
+            delete m_ocrEngine;
+            m_ocrEngine = nullptr;
+        }
+
+        setupOcr();
+    }
+
     void setupOcr() {
         m_ocrEngine = new PaddleOcrEngine(this);
-
         connect(m_ocrEngine, &PaddleOcrEngine::initialized,
                 this, &MainApp::onOcrInitialized);
         connect(m_ocrEngine, &PaddleOcrEngine::recognitionDone,
@@ -304,22 +367,24 @@ private:
     void onOcrDone(const QString& text) {
         qDebug() << "onOcrDone called, text:" << text << ", autoMonitorActive:" << m_autoMonitorActive;
 
-        if (text.isEmpty()) {
-            if (!m_autoMonitorActive) {
-                m_resultOverlay->showResultAt("未识别到文字，请重试", m_currentRect);
-            }
+        if (m_autoMonitorActive) {
             return;
         }
 
-        if (!m_autoMonitorActive) {
-            m_resultOverlay->showResultAt("正在翻译...", m_currentRect);
-            m_translator->translate(text);
+        if (text.isEmpty()) {
+            m_resultOverlay->showResultAt("未识别到文字，请重试", m_currentRect);
+            return;
         }
+
+        m_resultOverlay->showResultAt("正在翻译...", m_currentRect);
+        m_translator->translate(text);
     }
 
     void onOcrError(const QString& error) {
         qDebug() << "OCR 错误:" << error;
-        m_resultOverlay->showResult("OCR 错误: " + error);
+        if (!m_autoMonitorActive) {
+            m_resultOverlay->showResultAt("OCR 错误: " + error, m_currentRect);
+        }
     }
 
     void onRegionSelected(const QRect& rect) {
@@ -387,6 +452,11 @@ private:
 
         if (m_monitorTimer) {
             m_monitorTimer->stop();
+        }
+
+        if (m_autoOcrConnection) {
+            disconnect(m_autoOcrConnection);
+            m_autoOcrConnection = QMetaObject::Connection();
         }
 
         if (m_ocrEngine) {

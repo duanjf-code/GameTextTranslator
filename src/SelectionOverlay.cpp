@@ -44,26 +44,21 @@ void SelectionOverlay::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
     QPainter painter(this);
 
-    // 半透明遮罩
     painter.fillRect(rect(), QColor(0, 0, 0, 150));
 
     if (!m_selectedRect.isNull() && m_selectedRect.width() > 0 && m_selectedRect.height() > 0) {
-        // 镂空选区
         painter.setCompositionMode(QPainter::CompositionMode_Clear);
         painter.fillRect(m_selectedRect, Qt::transparent);
 
-        // 边框
         painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
         painter.setPen(QPen(Qt::red, 2));
         painter.drawRect(m_selectedRect);
 
-        // 显示尺寸
         QString sizeText = QString("%1 × %2").arg(m_selectedRect.width()).arg(m_selectedRect.height());
         painter.setPen(Qt::white);
         painter.setFont(QFont("Microsoft YaHei", 11));
         painter.drawText(m_selectedRect.bottomRight() + QPoint(8, 20), sizeText);
 
-        // ★ 根据模式显示不同提示
         if (m_mode == Mode::LockRegion) {
             painter.drawText(m_selectedRect.bottomRight() + QPoint(8, 40),
                              "松开即锁定此区域");
@@ -72,7 +67,6 @@ void SelectionOverlay::paintEvent(QPaintEvent* event) {
                              "松开即翻译");
         }
     } else {
-        // 提示
         painter.setPen(Qt::white);
         painter.setFont(QFont("Microsoft YaHei", 14));
         if (m_mode == Mode::LockRegion) {
@@ -93,6 +87,10 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event) {
         m_selectedRect = QRect();
         update();
     } else if (event->button() == Qt::RightButton) {
+        qDebug() << "Right click, cancelling";
+        m_selecting = false;
+        m_selectedRect = QRect();
+        emit cancelled();  // ★ 发射取消信号
         hide();
     }
 }
@@ -120,9 +118,14 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event) {
         } else {
             qDebug() << "=== Region too small, cancelling";
             m_selectedRect = QRect();
+            emit cancelled();  // ★ 选区太小也取消
             hide();
         }
     }
+}
+
+void SelectionOverlay::mouseDoubleClickEvent(QMouseEvent* event) {
+    // 双击什么都不做
 }
 
 void SelectionOverlay::keyPressEvent(QKeyEvent* event) {
@@ -130,6 +133,7 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event) {
         qDebug() << "ESC pressed, cancelling";
         m_selecting = false;
         m_selectedRect = QRect();
+        emit cancelled();  // ★ 发射取消信号
         hide();
     }
 }
