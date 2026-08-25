@@ -6,36 +6,32 @@
 #include <QFontMetrics>
 
 ResultOverlay::ResultOverlay(QWidget* parent)
-    : QWidget(parent), m_show(false), m_padding(20), m_maxWidth(600) {
+    : QWidget(parent), m_show(false), m_padding(15), m_maxWidth(500), m_useTargetPos(false) {
     setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
-
-    // 初始位置在右下角，稍后根据内容调整
     setVisible(false);
 
     connect(&m_autoHideTimer, &QTimer::timeout, this, &ResultOverlay::hideResult);
 }
 
 void ResultOverlay::showResult(const QString& text, int autoHideDelayMs) {
+    m_useTargetPos = false;
     m_resultText = text;
     m_show = true;
 
-    // ★ 计算文本所需大小
+    // 计算文本大小
     QFont font("Microsoft YaHei", 12);
     QFontMetrics fm(font);
-
-    // 计算文本矩形（限制最大宽度，自动换行）
     int maxWidth = m_maxWidth - m_padding * 2;
     QRect textRect = fm.boundingRect(QRect(0, 0, maxWidth, 2000),
                                      Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
                                      text);
 
-    // 计算窗口大小（文本 + 边距）
     int windowWidth = qMin(textRect.width() + m_padding * 2, m_maxWidth);
     int windowHeight = textRect.height() + m_padding * 2;
 
-    // ★ 调整窗口位置（右下角）
+    // 默认右下角
     QScreen* screen = QGuiApplication::primaryScreen();
     if (screen) {
         QRect screenRect = screen->geometry();
@@ -44,6 +40,52 @@ void ResultOverlay::showResult(const QString& text, int autoHideDelayMs) {
         setGeometry(x, y, windowWidth, windowHeight);
     }
 
+    setVisible(true);
+    raise();
+    update();
+
+    m_autoHideTimer.stop();
+    if (autoHideDelayMs > 0) {
+        m_autoHideTimer.start(autoHideDelayMs);
+    }
+}
+
+void ResultOverlay::showResultAt(const QString& text, const QRect& targetRect, int autoHideDelayMs) {
+    m_useTargetPos = true;
+    m_targetRect = targetRect;
+    m_resultText = text;
+    m_show = true;
+
+    // 计算文本大小
+    QFont font("Microsoft YaHei", 12);
+    QFontMetrics fm(font);
+    int maxWidth = m_maxWidth - m_padding * 2;
+    QRect textRect = fm.boundingRect(QRect(0, 0, maxWidth, 2000),
+                                     Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+                                     text);
+
+    int windowWidth = qMin(textRect.width() + m_padding * 2, m_maxWidth);
+    int windowHeight = textRect.height() + m_padding * 2;
+
+    // ★ 计算目标位置：在目标区域的正下方，左右居中
+    int x = targetRect.x() + (targetRect.width() - windowWidth) / 2;
+    int y = targetRect.y() + targetRect.height() + 5;
+
+    // 防止超出屏幕
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        QRect screenRect = screen->geometry();
+        if (x + windowWidth > screenRect.width()) {
+            x = screenRect.width() - windowWidth - 10;
+        }
+        if (x < 10) x = 10;
+        if (y + windowHeight > screenRect.height()) {
+            y = targetRect.y() - windowHeight - 5;  // 放上面
+        }
+        if (y < 10) y = 10;
+    }
+
+    setGeometry(x, y, windowWidth, windowHeight);
     setVisible(true);
     raise();
     update();

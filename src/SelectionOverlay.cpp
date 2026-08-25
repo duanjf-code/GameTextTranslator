@@ -8,17 +8,20 @@
 #include <QDebug>
 
 SelectionOverlay::SelectionOverlay(QWidget* parent)
-    : QWidget(parent), m_selecting(false) {
+    : QWidget(parent), m_selecting(false), m_mode(Mode::Normal) {
     setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
     setCursor(Qt::CrossCursor);
     setMouseTracking(true);
 }
 
+void SelectionOverlay::setMode(Mode mode) {
+    m_mode = mode;
+}
+
 void SelectionOverlay::startSelection() {
     qDebug() << "=== SelectionOverlay::startSelection called ===";
 
-    // ★ 立即重置所有状态
     m_selecting = false;
     m_selectedRect = QRect();
     m_startPos = QPoint();
@@ -59,11 +62,26 @@ void SelectionOverlay::paintEvent(QPaintEvent* event) {
         painter.setPen(Qt::white);
         painter.setFont(QFont("Microsoft YaHei", 11));
         painter.drawText(m_selectedRect.bottomRight() + QPoint(8, 20), sizeText);
+
+        // ★ 根据模式显示不同提示
+        if (m_mode == Mode::LockRegion) {
+            painter.drawText(m_selectedRect.bottomRight() + QPoint(8, 40),
+                             "松开即锁定此区域");
+        } else {
+            painter.drawText(m_selectedRect.bottomRight() + QPoint(8, 40),
+                             "松开即翻译");
+        }
     } else {
         // 提示
         painter.setPen(Qt::white);
         painter.setFont(QFont("Microsoft YaHei", 14));
-        painter.drawText(rect(), Qt::AlignCenter, "按住左键拖拽选择区域\n松开即自动翻译");
+        if (m_mode == Mode::LockRegion) {
+            painter.drawText(rect(), Qt::AlignCenter,
+                             "拖拽选择要锁定的区域\n此区域将被持续监控");
+        } else {
+            painter.drawText(rect(), Qt::AlignCenter,
+                             "按住左键拖拽选择区域\n松开即自动翻译");
+        }
     }
 }
 
@@ -91,7 +109,6 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_selecting) {
         m_selecting = false;
 
-        // 松开即确认
         if (!m_selectedRect.isNull() &&
             m_selectedRect.width() > 10 &&
             m_selectedRect.height() > 10) {

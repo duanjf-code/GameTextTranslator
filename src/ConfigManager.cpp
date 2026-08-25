@@ -28,6 +28,7 @@ bool ConfigManager::load() {
         m_autoStart = false;
         m_ocrLanguage = "config_chinese.txt";
         m_targetLanguage = "zh";
+        m_monitorInterval = 1000;
         save();
         return true;
     }
@@ -40,6 +41,7 @@ bool ConfigManager::load() {
         m_autoStart = false;
         m_ocrLanguage = "config_chinese.txt";
         m_targetLanguage = "zh";
+        m_monitorInterval = 1000;
         return true;
     }
 
@@ -55,6 +57,7 @@ bool ConfigManager::load() {
         m_autoStart = false;
         m_ocrLanguage = "config_chinese.txt";
         m_targetLanguage = "zh";
+        m_monitorInterval = 1000;
         return true;
     }
 
@@ -65,11 +68,13 @@ bool ConfigManager::load() {
     m_autoStart = obj["auto_start"].toBool(false);
     m_ocrLanguage = obj["ocr_language"].toString("config_chinese.txt");
     m_targetLanguage = obj["target_language"].toString("zh");
+    m_monitorInterval = obj["monitor_interval"].toInt(1000);
 
     qDebug() << "Config loaded: hotkey =" << m_hotkey.toString()
              << ", autoStart =" << m_autoStart
              << ", ocrLang =" << m_ocrLanguage
-             << ", targetLang =" << m_targetLanguage;
+             << ", targetLang =" << m_targetLanguage
+             << ", monitorInterval =" << m_monitorInterval;
     return true;
 }
 
@@ -81,6 +86,7 @@ bool ConfigManager::save() {
     obj["auto_start"] = m_autoStart;
     obj["ocr_language"] = m_ocrLanguage;
     obj["target_language"] = m_targetLanguage;
+    obj["monitor_interval"] = m_monitorInterval;
 
     QJsonDocument doc(obj);
 
@@ -103,6 +109,7 @@ QString ConfigManager::getBaiduSecretKey() const { return m_baiduSecretKey; }
 bool ConfigManager::getAutoStart() const { return m_autoStart; }
 QString ConfigManager::getOcrLanguage() const { return m_ocrLanguage; }
 QString ConfigManager::getTargetLanguage() const { return m_targetLanguage; }
+int ConfigManager::getMonitorInterval() const { return m_monitorInterval; }
 
 // ===== Setters =====
 void ConfigManager::setScreenshotHotkey(const QKeySequence& hotkey) {
@@ -134,5 +141,10 @@ void ConfigManager::setOcrLanguage(const QString& lang) {
 
 void ConfigManager::setTargetLanguage(const QString& lang) {
     m_targetLanguage = lang;
+    save();
+}
+
+void ConfigManager::setMonitorInterval(int ms) {
+    m_monitorInterval = ms;
     save();
 }

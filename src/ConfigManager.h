@@ -24,13 +24,17 @@ public:
     bool getAutoStart() const;
     void setAutoStart(bool enabled);
 
-    // ★ OCR 语言
+    // OCR 语言
     QString getOcrLanguage() const;
     void setOcrLanguage(const QString& lang);
 
-    // ★ 目标语言
+    // 目标语言
     QString getTargetLanguage() const;
     void setTargetLanguage(const QString& lang);
+
+    // ★ 监听间隔
+    int getMonitorInterval() const;
+    void setMonitorInterval(int ms);
 
     bool load();
     bool save();
@@ -51,6 +55,7 @@ private:
     bool m_autoStart;
     QString m_ocrLanguage;
     QString m_targetLanguage;
+    int m_monitorInterval;  // ★ 新增
 };
 
 #endif
